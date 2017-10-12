@@ -57,6 +57,7 @@ def enumerate_allele_candidates(G, cur_node, cur_str, other_str):
 def make_haplotype_graph(haplotype_strings, err_sub, max_diff_allowed):
     G = nx.Graph()
     n = len(haplotype_strings)
+    for i in xrange(n): G.add_node(i)
     hap_str_len = len(haplotype_strings[0])
     max_diff = max(max_diff_allowed, err_sub * hap_str_len)
     for i1 in xrange(n-1):
@@ -82,10 +83,14 @@ def make_haplotype_counts(isoform_tally):
 
 def error_correct_haplotypes(G, hap_count, hap_obj, isoform_tally):
     cliques = [comm for comm in nx.k_clique_communities(G, 2)]
+    # adding all orphans as a clique by itself
+    nodes_left = set(G.nodes())
+
     new_hap_obj = Haplotypes(hap_obj.hap_var_positions, hap_obj.ref_at_pos, hap_obj.count_of_vars_by_pos)
     # for each clique, pick the one that has the most counts
     old_to_new_map = {}
     for i,members in enumerate(cliques):
+        for hap_index in members: nodes_left.remove(hap_index)
         stuff = [(hap_index, hap_count[hap_index]) for hap_index in members]
         stuff.sort(key=lambda x: x[1], reverse=True)
         # choose the most abundant haplotype that does NOT have a '?'
@@ -95,9 +100,15 @@ def error_correct_haplotypes(G, hap_count, hap_obj, isoform_tally):
             if all(s!='?' for s in hap_str):
                 chosen_hap_index = hap_index
                 break
-
         new_hap_index, msg = new_hap_obj.match_or_add_haplotype(hap_obj.haplotypes[chosen_hap_index])
         for x in members: old_to_new_map[x] = new_hap_index
+    # look through all leftover nodes, add them if doesn't contain '?'
+    for hap_index in nodes_left:
+        hap_str = hap_obj.haplotypes[hap_index]
+        if all(s != '?' for s in hap_str):
+            new_hap_index, msg = new_hap_obj.match_or_add_haplotype(hap_obj.haplotypes[hap_index])
+            old_to_new_map[hap_index] = new_hap_index
+
     # now create a new isoform_tally
     new_isoform_tally = {}
     for k,v in isoform_tally.iteritems():
