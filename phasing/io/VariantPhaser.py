@@ -1,7 +1,7 @@
 __author__ = 'etseng@pacb.com'
 
 import pdb
-from collections import defaultdict
+from collections import defaultdict, namedtuple
 from csv import DictReader
 import vcf
 from Bio.Seq import Seq
@@ -239,6 +239,29 @@ class Haplotypes(object):
             self.haplotypes.append(hap_string)
             return i, "NEW"
 
+    def impute_haplotype(self, hap_string, min_score):
+        """
+        :param hap_string: a hap string with '?'s.
+        :param min_sim: minimum similarity with existing haplotype to accept assignment
+        :return: <index> of an existing haplotype, or None if not sufficiently matched
+
+        Impute haplotype and only return a match if:
+        (a) score (similarity) is >= min_score
+        (b) the matching score for the best one is higher than the second best match
+        """
+        sim_tuple = namedtuple('sim_tuple', 'index score')
+        sims = [] # list of sim_tuple
+        hap_str_len = len(hap_string)
+        for i in xrange(len(self.haplotypes)):
+            # Liz note: currently NOT checking whether existing haplotypes have '?'. I'm assuming no '?'.
+            score = sum((hap_string[k]==self.haplotypes[i][k]) for k in xrange(hap_str_len))
+            if score > 0:
+                sims.append(sim_tuple(index=i, score=score))
+        sims.sort(key=lambda x: x.score, reverse=True)
+        if sims[0].score >= min_score and (len(sims)==1 or sims[0].score > sims[1].score):
+            return sims[0].index
+        else:
+            return None
 
     def get_haplotype_vcf_assignment(self):
         """

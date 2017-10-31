@@ -54,26 +54,42 @@ def enumerate_allele_candidates(G, cur_node, cur_str, other_str):
             enumerate_allele_candidates(G, node, cur_str+node[1])
 
 
-def make_haplotype_graph(haplotype_strings, err_sub, max_diff_allowed):
+def make_haplotype_graph_nonpartial_only(haplotype_strings, err_sub, max_diff_allowed):
+    """
+    :param haplotype_strings: list of haplotype strings (in order), ex: ["AATT", "TCGG", "A?TT"]
+    :param err_sub: given substitution error rate
+    :param max_diff_allowed: maximium base diff allowed to connect the two strings (graph edges)
+    :return: a nx.Graph where nodes are haplotype indices and connecting edges indicate string similarity
+
+    This is a prep function for creating a similarity graph where we can use to eventually identify the true alleles.
+    *NOTE:* Hap strings with missing bases ('?') are ignored.
+    """
     G = nx.Graph()
     n = len(haplotype_strings)
-    for i in xrange(n): G.add_node(i)
     hap_str_len = len(haplotype_strings[0])
-    max_diff = max(max_diff_allowed, err_sub * hap_str_len)
-    for i1 in xrange(n-1):
+    if hap_str_len > 2*max_diff_allowed:
+        max_diff = max(max_diff_allowed, err_sub * hap_str_len)
+    else:
+        max_diff = err_sub * hap_str_len
+    partial_haps = filter(lambda i: any(s=='?' for s in haplotype_strings[i]), xrange(n))
+    for i1 in xrange(n):
+        if i1 in partial_haps: continue # skip ones with '?'
+        G.add_node(i1)
         for i2 in xrange(i1+1, n):
+            if i2 in partial_haps: continue # skip ones with '?'
             s1 = haplotype_strings[i1]
             s2 = haplotype_strings[i2]
-            sim = sum((s1[k]==s2[k] or s1[k]=='?' or s2[k]=='?') for k in xrange(hap_str_len))
+            sim = sum((s1[k]==s2[k]) for k in xrange(hap_str_len))
             if (hap_str_len-sim) < max_diff:
                 G.add_edge(i1, i2, weight=sim)
-    return G
+    return G, partial_haps
 
 
 def make_haplotype_counts(isoform_tally):
     """
     :param hap_obj: Haplotype object
     :param isoform_tally: list of (isoform, dict of haplotype count), ex: {'PB.45.1': {0:10, 1:20}}
+    :return: dict of haplotype index --> total count (of FL reads)
     """
     hap_count = Counter() # haplotype index --> total count
     for tally in isoform_tally.itervalues():
@@ -81,7 +97,21 @@ def make_haplotype_counts(isoform_tally):
             hap_count[hap_index] += count
     return hap_count
 
-def error_correct_haplotypes(G, hap_count, hap_obj, isoform_tally):
+
+def error_correct_haplotypes(G, partial_haps, hap_count, hap_obj, isoform_tally):
+    """
+    :param G: Graph of haplotype str similarities (via make_haplotype_graph_nonpartial_only), using only nonpartial hap strings
+    :param partial_haps: list of indices of haps that are partial (have '?') and not in G. need to be imputed.
+    :param hap_count: dict of haplotype index --> total count (via make_haplotype_counts)
+    :param hap_obj: Haplotype object
+    :param isoform_tally: list of (isoform, dict of haplotype count), ex: {'PB.45.1': {0:10, 1:20}}
+
+    :return: new_to_map_mapping, new_hap_obj, new_isoform_tally
+
+    1. first identify cliques from G
+    2. each clique becomes a new haplotype; pick the most common one are the representative
+    3. error correct the other clique members to become this rep (adding counts to it)
+    """
     cliques = [comm for comm in nx.k_clique_communities(G, 2)]
     # adding all orphans as a clique by itself
     nodes_left = set(G.nodes())
@@ -93,21 +123,30 @@ def error_correct_haplotypes(G, hap_count, hap_obj, isoform_tally):
         for hap_index in members: nodes_left.remove(hap_index)
         stuff = [(hap_index, hap_count[hap_index]) for hap_index in members]
         stuff.sort(key=lambda x: x[1], reverse=True)
-        # choose the most abundant haplotype that does NOT have a '?'
+        # choose the most abundant haplotype (none of them have '?')
         chosen_hap_index = stuff[0][0] # init to first one
-        for hap_index, count_ignore in stuff:
-            hap_str = hap_obj.haplotypes[hap_index]
-            if all(s!='?' for s in hap_str):
-                chosen_hap_index = hap_index
-                break
+        # --- below not needed anymore becuz we're only using nonpartial strings with no '?' ---
+        #for hap_index, count_ignore in stuff:
+        #    hap_str = hap_obj.haplotypes[hap_index]
+        #    if all(s!='?' for s in hap_str):
+        #        chosen_hap_index = hap_index
+        #        break
         new_hap_index, msg = new_hap_obj.match_or_add_haplotype(hap_obj.haplotypes[chosen_hap_index])
         for x in members: old_to_new_map[x] = new_hap_index
-    # look through all leftover nodes, add them if doesn't contain '?'
+
+    # look through all leftover nodes, all of which do not have '?'
     for hap_index in nodes_left:
-        hap_str = hap_obj.haplotypes[hap_index]
-        if all(s != '?' for s in hap_str):
-            new_hap_index, msg = new_hap_obj.match_or_add_haplotype(hap_obj.haplotypes[hap_index])
+        new_hap_index, msg = new_hap_obj.match_or_add_haplotype(hap_obj.haplotypes[hap_index])
+        old_to_new_map[hap_index] = new_hap_index
+
+    # impute partial hap strings, assign them if they are sufficiently close to a hap
+    for hap_index in partial_haps:
+        # min_score = 3 means the partial hap must have at least two base matches with the highest scoring one
+        new_hap_index = new_hap_obj.impute_haplotype(hap_obj.haplotypes[hap_index], min_score=3)
+        if new_hap_index is not None:
             old_to_new_map[hap_index] = new_hap_index
+        else: # could not impute, discard, so do nothing
+            pass
 
     # now create a new isoform_tally
     new_isoform_tally = {}

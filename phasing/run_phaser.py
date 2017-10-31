@@ -13,6 +13,7 @@ from phasing.io import VariantPhaseCleaner
 
 MIN_COVERAGE = 10
 ERR_SUB = 0.005
+MAX_DIFF_ALLOWED = 3  # maximum difference in bases allowed for two haplotype strings
 
 from argparse import ArgumentParser
 parser = ArgumentParser()
@@ -54,7 +55,8 @@ pp.haplotypes.write_haplotype_to_vcf(args.mapping_filename, isoform_tally, args.
 
 # (4) clean isoforms
 hap_count = VariantPhaseCleaner.make_haplotype_counts(isoform_tally)
-G = VariantPhaseCleaner.make_haplotype_graph(pp.haplotypes.haplotypes, ERR_SUB, 3)
-m, new_hap, new_isoform_tally = VariantPhaseCleaner.error_correct_haplotypes(G, hap_count, pp.haplotypes, isoform_tally)
+G, partial_haps = VariantPhaseCleaner.make_haplotype_graph_nonpartial_only(pp.haplotypes.haplotypes, ERR_SUB, MAX_DIFF_ALLOWED)
+print "G nodes:", G.nodes(), "G edges:", G.edges()
+m, new_hap, new_isoform_tally = VariantPhaseCleaner.error_correct_haplotypes(G, partial_haps, hap_count, pp.haplotypes, isoform_tally)
 new_hap.get_haplotype_vcf_assignment()
 new_hap.write_haplotype_to_vcf(args.mapping_filename, new_isoform_tally, args.output_prefix+'.cleaned')
