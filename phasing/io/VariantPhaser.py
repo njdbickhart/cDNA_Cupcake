@@ -174,8 +174,9 @@ class Haplotypes(object):
     """
     def __init__(self, var_positions, ref_at_pos, count_of_vars_by_pos):
         """
-        :param hap_var_positions: sorted list of (0-based) variant positions
+        :param var_positions: sorted list of (0-based) variant positions
         :param ref_at_pos: dict of (0-based) variant position --> ref base at this position
+        :param count_of_vars_by_pos: 0-based pos --> (NOT strand sense, but ref-based) base --> count
         """
         self.haplotypes = [] # haplotypes, where haplotypes[i] is the i-th distinct haplotype of all var concat
         self.hap_var_positions = var_positions

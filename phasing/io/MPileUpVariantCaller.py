@@ -11,7 +11,7 @@ import scipy.stats as stats
 from collections import Counter
 
 class MPileUPVariant(object):
-    def __init__(self, record_list, min_cov, err_sub, expected_strand):
+    def __init__(self, record_list, min_cov, err_sub, expected_strand, pval_cutoff=0.01):
         """
         :param record_list: list of SAMMPileUpRecord
         :param min_cov: minimum coverage to call variant
@@ -21,7 +21,7 @@ class MPileUPVariant(object):
         self.record_by_pos = dict((r.pos, r) for r in record_list)
         self.min_cov = min_cov
         self.err_sub = err_sub
-        self.pval_cutoff = 0.01
+        self.pval_cutoff = pval_cutoff
         self.expected_strand = expected_strand
 
         self.prep_records()

@@ -14,6 +14,7 @@ from phasing.io import VariantPhaseCleaner
 MIN_COVERAGE = 10
 ERR_SUB = 0.005
 MAX_DIFF_ALLOWED = 3  # maximum difference in bases allowed for two haplotype strings
+PVAL_CUTOFF = 0.01
 
 from argparse import ArgumentParser
 parser = ArgumentParser()
@@ -25,6 +26,8 @@ parser.add_argument("mapping_filename")
 parser.add_argument("-o", "--output_prefix", required=True)
 parser.add_argument("--strand", choices=['+', '-'], required=True)
 parser.add_argument("--partial_ok", default=False, action="store_true")
+parser.add_argument("-p", "--pval_cutoff", default=PVAL_CUTOFF, type=float)
+#parser.add_argument("-e", "--err_sub", default=ERR_SUB, type=float, help="Estimated substitution error rate (default: 0.005)")
 
 
 args = parser.parse_args()
@@ -33,7 +36,7 @@ args = parser.parse_args()
 # (1) read the mpileup and vall variants
 reader = sp.MPileUpReader(args.mpileup_filename)
 recs = [r for r in reader]
-vc = VC.MPileUPVariant(recs, min_cov=MIN_COVERAGE, err_sub=ERR_SUB, expected_strand=args.strand)
+vc = VC.MPileUPVariant(recs, min_cov=MIN_COVERAGE, err_sub=ERR_SUB, expected_strand=args.strand, pval_cutoff=args.pval_cutoff)
 vc.call_variant()
 print vc.variant
 
