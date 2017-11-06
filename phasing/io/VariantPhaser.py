@@ -114,6 +114,7 @@ class VariantPhaser(object):
         # <hap> to represent the concatenated string of all variant positions for this seq
         # ex: if there are three var positions, a hap would be "ATG" or "A?G" (if partial_ok is True), etc.
         hap = ''
+        impute_later = False
         for ref_pos in self.accepted_pos:
             if ref_pos not in ref_m:
                 if partial_ok: # read does not cover one of the SNP positions, so use "?"
@@ -126,11 +127,19 @@ class VariantPhaser(object):
                     base = str(Seq(base).reverse_complement()).upper()
                 if base in self.accepted_vars_by_pos[ref_pos]:
                     hap += base
-                else: # contains a base at a variant position that is not called, outlier.
-                    return None, "Base at ref_pos {0} contains non-called variant {1}.\n".format(ref_pos, base)
+                else: # contains a base at a variant position that is not called. Try to impute.
+                    hap += base
+                    impute_later = True
 
         if all(b=='?' for b in hap):
             return None, "Does not cover any variant base."
+
+        if impute_later:
+            impute_i = self.haplotypes.impute_haplotype(hap, min_score=3)
+            if impute_i is None:
+                return None, "Seq {0} contained non-called variant. Impute failed.\n".format(hap)
+            else:
+                return impute_i, "IMPUTED"
         return self.haplotypes.match_or_add_haplotype(hap_string=hap)
 
 
@@ -258,6 +267,8 @@ class Haplotypes(object):
             score = sum((hap_string[k]==self.haplotypes[i][k]) for k in xrange(hap_str_len))
             if score > 0:
                 sims.append(sim_tuple(index=i, score=score))
+        if len(sims) == 0:
+            return None
         sims.sort(key=lambda x: x.score, reverse=True)
         if sims[0].score >= min_score and (len(sims)==1 or sims[0].score > sims[1].score):
             return sims[0].index
