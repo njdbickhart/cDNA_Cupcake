@@ -71,13 +71,13 @@ pp.phase_variant(args.sam_filename, args.fastx_filename, args.output_prefix, par
 pp.haplotypes
 pp.haplotypes.get_haplotype_vcf_assignment()
 
-# (3) phase isoforms
-seqids = set([r.id for r in SeqIO.parse(open(args.fastx_filename), VariantPhaser.type_fa_or_fq(args.fastx_filename))])
-isoform_tally = VariantPhaser.phase_isoforms(args.read_stat, seqids, pp)
-if len(isoform_tally) == 0:
-    os.system("touch {out}.NO_HAPS_FOUND".format(out=args.output_prefix))
-    print("No good haps found. END.", file=sys.stderr)
-    sys.exit(0)
+# (3) phase isoforms -- not needed for this analysis!
+#seqids = set([r.id for r in SeqIO.parse(open(args.fastx_filename), VariantPhaser.type_fa_or_fq(args.fastx_filename))])
+#isoform_tally = VariantPhaser.phase_isoforms(args.read_stat, seqids, pp)
+#if len(isoform_tally) == 0:
+#    os.system("touch {out}.NO_HAPS_FOUND".format(out=args.output_prefix))
+#    print("No good haps found. END.", file=sys.stderr)
+#    sys.exit(0)
 pp.haplotypes.write_haplotype_to_vcf(args.mapping_filename, isoform_tally, args.output_prefix)
 
 # (4) clean isoforms
