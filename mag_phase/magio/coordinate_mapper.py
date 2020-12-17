@@ -50,7 +50,7 @@ def make_exons_from_base_mapping(mapping, start, end, strand):
 
 
 
-def get_base_to_base_mapping_from_sam(exons, cigar_string, qStart, qEnd, strand, include_junction_info=False):
+def get_base_to_base_mapping_from_sam(reftuple, cigcounts, qEnd, strand, include_junction_info=False):
     """
     For PacBio data which can have indels w.r.t genome =___=
 
@@ -58,74 +58,25 @@ def get_base_to_base_mapping_from_sam(exons, cigar_string, qStart, qEnd, strand,
         cigar: 1S105M407N548M
         sStart-sEnd: 948851-949911
         qStart-qEnd: 2-655
-        segments: [(start, end), (start, end)]
+        reftuple: [(start, end), (start, end)]
 
     Returns: dict of 0-based position --> 0-based ref position
     """
     cur_exon_i = 0
-    cur_nt_loc = qStart
-    cur_genome_loc = exons[0][0]]
+    cur_nt_loc = 0 
+    cur_genome_loc = reftuple[0][1]
 
-    start_soft_clip = qStart > 0
 
     last_base_is_junction = False
     qLen = qEnd
 
     mapping = {}
-
-    for num, s in iter_cigar_string(cigar_string):
-        if s == 'S': # soft clipping at the ends, ignore
-            if start_soft_clip:
-                assert num == qStart
-                for i in range(num): mapping[i] = (cur_genome_loc, False)
-                start_soft_clip = False
-            else:
-                # soft clipping at the end
-                # advance the mapping but not cur_nt_loc (otherwise will be diff from qEnd)
-                for i in range(num):
-                    mapping[cur_nt_loc+i] = (cur_genome_loc, False)
-                    #cur_nt_loc += 1
-                    #print cur_nt_loc
-                    # for soft clipping at the end, do NOT progress cur_nt_loc!
-                    # we are now "outside" the alignment, otherwise
-                    # assert cur_nt_loc == qEnd will be wrong at the end
-                #cur_nt_loc -= 1
-                qLen += num # query length must be qEnd + soft clipped end
-        elif s == 'N': # intron, move to next ref exon
-            mapping[cur_nt_loc-1] = (mapping[cur_nt_loc-1][0], True)
-            assert cur_genome_loc == exons[cur_exon_i][1]
-            cur_exon_i += 1
-            cur_genome_loc = exons[cur_exon_i][0]
-            last_base_is_junction = True
-        elif s == 'M':
-            # for the next "num" matches are all 1:1
-            for i in range(num):
-                if cur_nt_loc in mapping and mapping[cur_nt_loc][1]:
-                    # if this is true, then last mapping must be 'D' and was a junction
-                    # so we do nothing -- keep it
-                    pass
-                else:
-                    mapping[cur_nt_loc] = (cur_genome_loc, last_base_is_junction)
-                last_base_is_junction = False
-                cur_nt_loc += 1
-                cur_genome_loc += 1
-            assert cur_genome_loc <= exons[cur_exon_i][1]
-        elif s == 'I': # insertion w.r.t to genome
-            for i in range(num):
-                mapping[cur_nt_loc] = (cur_genome_loc, last_base_is_junction)
-                cur_nt_loc += 1
-                last_base_is_junction = False
-        elif s == 'D': # deletion w.r.t. to genome
-            # if last_base_is_junction is True, we want to make sure it makes it in mapping
-            mapping[cur_nt_loc] = (cur_genome_loc, last_base_is_junction)
-            last_base_is_junction = False
-            cur_genome_loc += num
-# BELOW IS WRONG
-#            for i in xrange(num):
-#                mapping[cur_nt_loc] = cur_genome_loc
-#                cur_genome_loc += 1
-            assert cur_genome_loc <= exons[cur_exon_i][1]
-    assert cur_nt_loc == qEnd or (cur_nt_loc==qEnd-1 and s=='S')
+    for qpos, rpos in reftuple:
+        if qpos != None and rpos != None:
+            mapping[qpos] = (rpos, True)
+        elif qpos != None:
+            mapping[qpos] = (cur_genome_loc, None)
+        if rpos != None: cur_genome_loc = rpos
 
     if strand == '-':
         mapping = dict((qLen-1-k, v) for k,v in mapping.items())

@@ -6,9 +6,9 @@ from csv import DictReader
 import vcf
 from Bio.Seq import Seq
 from Bio import SeqIO
-from string import maketrans
 import pysam
 from .coordinate_mapper import get_base_to_base_mapping_from_sam
+import numpy as np
 
 
 __VCF_EXAMPLE__ = \
@@ -54,14 +54,14 @@ class VariantPhaser(object):
         self.accepted_pos = list(self.accepted_vars_by_pos.keys())
         self.accepted_pos.sort()
 
-        self.haplotypes = Haplotypes(self.accepted_pos, self.vc.ref_base, self.count_of_vars_by_pos)
+        self.haplotypes = Haplotypes(self.accepted_pos, [self.vc.ref_name[p] for p in self.accepted_pos],self.vc.ref_base, self.count_of_vars_by_pos)
         self.seq_hap_info = {} # haplotype assignment, key: (CCS) seqid, value: haplotype index
 
 
     def phase_variant(self, sam_filename, coordstr, output_prefix, partial_ok=False):
         """
         :param sam_filename: CCS SAM filename. Can be unsorted.
-        :param coordstr: list of lists of bed file coordinates of the pileup.
+        :param coordstr: list of bed file coordinates in the pileup.
         :param output_prefix: Output prefix. Writes to xxx.log.
         :param partial_ok: default False. if True, (CCS) reads don't need to cover all SNP positions.
 
@@ -70,30 +70,39 @@ class VariantPhaser(object):
         2. discard if did not map to the full range of variants (unless <partial_ok> is True)
         3. discard if at var positions have non-called bases (outliers)
         """
-        f_log = open(output_prefix+'.log', 'w')
+        f_log = open(output_prefix+'.log', 'a+')
 
+        secondary_align_counts = 0
+        tot_align_counts = 0
         with pysam.AlignmentFile(sam_filename, 'rb') as samfile:
-            for b in coordstr:
-                for s in samfile.fetch(b[0], int(b[1]), int(b[2])):
-                    if s.get_reference_name() == '*':
-                        f_log.write("Ignore {0} because: unmapped.\n".format(s.query_name))
-                        continue
-                        # We ignore the strand conditional here as it doesn't matter for this analysis
-                    if not partial_ok and (s.reference_start > self.min_var_pos or s.reference_end < self.max_var_pos):
-                        f_log.write("Ignore {0} because: aln too short, from {1}-{2}.\n".format(s.query_name, s.referenc_start+1, s.reference_end))
-                        continue
+            for s in samfile.fetch(coordstr[0], coordstr[1], coordstr[2]):
+                tot_align_counts += 1
+                if s.reference_name == '*':
+                    f_log.write("Ignore {0} because: unmapped.\n".format(s.query_name))
+                    continue
+                    # We ignore the strand conditional here as it doesn't matter for this analysis
+                    #strand = '+' if not s.is_reverse else '-'
+                    #if strand != self.vc.expected_strand:
+                    #    continue
+                if not partial_ok and (s.reference_start > self.min_var_pos or s.reference_end < self.max_var_pos):
+                    f_log.write("Ignore {0} because: aln too short, from {1}-{2}.\n".format(s.query_name, s.referenc_start+1, s.reference_end))
+                    continue
 
                     # Ensure that sequence is always in the forward mapping orientation
-                    seqstr = s.query_sequence.upper() if not s.is_reverse else str(s.query_sequence[::-1]).translate(maketrans('ACGT', 'TGCA'))
-
-                    i, msg = self.match_haplotype(s, seqstr, partial_ok)
-                    if i is None: # read is rejected for reason listed in <msg>
-                        f_log.write("Ignore {0} because: {1}.\n".format(s.query_name, msg))
-                        continue
-                    else:
-                        f_log.write("{0} phased: haplotype {1}={2}\n".format(s.query_name, i, self.haplotypes[i]))
-                        print("{0} has haplotype {1}:{2}".format(s.query_name, i, self.haplotypes[i]))
-                        self.seq_hap_info[s.query_name] = i
+                    #seqstr = s.query_sequence.upper() if not s.is_reverse else s.query_sequence[::-1].translate(str.maketrans('ACGT', 'TGCA')).upper()
+                if s.is_secondary:
+                    secondary_align_counts += 1
+                    continue
+                seqstr = s.query_sequence.upper()
+                i, msg = self.match_haplotype(s, seqstr, partial_ok)
+                if i is None: # read is rejected for reason listed in <msg>
+                    f_log.write("Ignore {0} because: {1}.\n".format(s.query_name, msg))
+                    continue
+                else:
+                    f_log.write("{0} phased: haplotype {1}={2}\n".format(s.query_name, i, self.haplotypes[i]))
+                    print("{0} has haplotype {1}:{2}".format(s.query_name, i, self.haplotypes[i]))
+                    self.seq_hap_info[s.query_name] = i
+        f_log.write(f'Encountered {secondary_align_counts} out of {tot_align_counts} read alignments')
 
 
     def match_haplotype(self, r, s, partial_ok=False):
@@ -106,10 +115,15 @@ class VariantPhaser(object):
 
         :return: (haplotype_index, msg) or (None, msg) if variants don't match w/ called SNPs
         """
-        assert type(s) is str and str.isupper(s)
+        try:
+            assert type(s) is str and str.isupper(s)
+        except Exception as e:
+            print(f'exception: {s}')
         # m: mapping of 0-based seq --> 0-based ref position
         # rev_map: mapping of 0-based ref position --> 0-based seq
-        m = get_base_to_base_mapping_from_sam(r.get_blocks(), r.cigarstring, r.reference_start, r.reference_end, '+')
+        cigcounts = r.cigartuples
+        strand = '-' if r.is_reverse else '+' 
+        m = get_base_to_base_mapping_from_sam(r.get_aligned_pairs(), cigcounts, len(r.query_sequence), strand)
         ref_m = dict((v,k) for k,v in m.items())
 
         # go through each variant
@@ -181,7 +195,7 @@ class Haplotypes(object):
     if N = len(self.haplotype[i]), then there are N variants along the loci.
     self.hap_var_positions[j] means that the j-th variant corressponds to (0-based) position on the ref genome.
     """
-    def __init__(self, var_positions, ref_at_pos, count_of_vars_by_pos):
+    def __init__(self, var_positions, chrs, ref_at_pos, count_of_vars_by_pos):
         """
         :param var_positions: sorted list of (0-based) variant positions
         :param ref_at_pos: dict of (0-based) variant position --> ref base at this position
@@ -193,6 +207,7 @@ class Haplotypes(object):
         self.alt_at_pos = None # init: None, later: dict of (0-based) pos --> unique list of alt bases
         self.count_of_vars_by_pos = count_of_vars_by_pos
         self.haplotype_vcf_index = None # init: None, later: dict of (hap index) --> (0-based) var pos --> phase (0 for ref, 1+ for alt)
+        self.chrs = chrs # contig names where chrs[i] is the i-th contig name
 
         # sanity check: all variant positions must be present
         self.sanity_check()
@@ -321,10 +336,11 @@ class Haplotypes(object):
                     self.alt_at_pos[pos].append(_base)
 
 
-    def write_haplotype_to_vcf(self, fake_genome_mapping_filename, isoform_tally, output_prefix):
+    def write_haplotype_to_vcf(self, fake_genome_mapping_filename, contig, f_human):
         """
         The following functions must first be called first:
         -- self.get_haplotype_vcf_assignment
+        f_human : human readable tab file handle
         """
         if self.haplotype_vcf_index is None or self.alt_at_pos is None:
             raise Exception("Must call self.get_haplotype_vcf_assignment() first!")
@@ -335,30 +351,63 @@ class Haplotypes(object):
         #name_isoforms.sort()
 
         # write a fake VCF example so we can read the headers in
-        with open('template.vcf', 'w') as f:
-            f.write(__VCF_EXAMPLE__)
-        reader = vcf.VCFReader(open('template.vcf'))
-        reader.samples = name_isoforms
-        f_vcf = vcf.Writer(open(output_prefix+'.vcf', 'w'), reader)
+        #with open('template.vcf', 'w') as f:
+        #    f.write(__VCF_EXAMPLE__)
+        #reader = vcf.VCFReader(open('template.vcf'))
+        #reader.samples = [str(i) for i in range(len(self.haplotypes))]
+        #f_vcf = vcf.Writer(open(output_prefix+'.vcf', 'w'), reader)
 
 
         # human readable text:
         # first line: assoc VCF filename
         # second line: haplotype, list of sorted isoforms
         # third line onwards: haplotype and assoc count
-        f_human = open(output_prefix+'.human_readable.txt', 'w')
-        f_human.write("Associated VCF file: {0}.vcf\n".format(output_prefix))
-        f_human.write("haplotype\t{samples}\n".format(samples="\t".join(name_isoforms)))
+        #f_human = open(output_prefix+'.human_readable.txt', 'w')
+        #f_human.write("Associated VCF file: {0}.vcf\n".format(output_prefix))
+        lines = list()
+            
         for hap_index,hap_str in enumerate(self.haplotypes):
-            f_human.write(hap_str)
-            f_human.write("\t0")
-            f_human.write('\n')
-        f_human.close()
+            refcount = list()
+            altcount = defaultdict(list)
+            refline = []
+            altline = defaultdict(list)
+            for k, v in self.haplotype_vcf_index[hap_index].items():
+                if len(refline) == 0:
+                    refline = [hap_str, hap_index, contig, k, k + len(hap_str), "REF", 0]
+                if v == '.' or v == '0' or v == 0:
+                    continue
+                base = self.ref_at_pos[k]
+                count = self.count_of_vars_by_pos[k][base]
+                #refcount.append(self.count_of_vars_by_pos[k][base])
+                f_human.write(f'{hap_str}\t{hap_index}\t{contig}\t{k}\tREF\t{base}\t{count}\n')
+                for i in range(int(v)):
+                    base = self.alt_at_pos[k][i]
+                    count = self.count_of_vars_by_pos[k][base]
+                    if i not in altcount:
+                        altline[i] = [hap_str, hap_index, contig, refline[3], refline[4], i, 0]
+                    altcount[i].append(count)
+                    #print(f'{k}\t{i}\t{refline[3]}')
+                    #hmod = list(altline[i][0])
+                    #hmod[k - refline[3]] = base
+                    #altline[i][0] = str(hmod)# set the base to the predicted variant
+                    f_human.write(f'{hap_str}\t{hap_index}\t{contig}\t{k}\t{i}\t{base}\t{count}\n')
+            #rc = np.mean(refcount) # Get the average depth of reads
+            #refline[-1] = rc
+            #lines.append(refline)
+            #for i in altcount:
+            #    ac = np.mean(altcount[i])
+            #    altline[i][-1] = ac
+            #    lines.append(altline[i])
+
+        #for l in lines:
+        #    f_human.write("\t".join(l))
+        #f_human.close()
 
         # Temporary escape as we don't need vcfs here
-        f_vcf.close()
+        #f_vcf.close()
         return
 
+        isoform_tally = dict() # added as a temporary placeholder
         # read fake genome mapping file
         fake_map = {} # 0-based position on fake --> (chr, 0-based ref position)
         with open(fake_genome_mapping_filename) as f:

@@ -33,6 +33,7 @@ class MPileUPVariant(object):
 
         self.variant = {} # position --> in sorted order, (base, count)
         self.ref_base = {} # position --> ref base
+        self.ref_name = {} # position --> ref contig
 
         self.call_variant()
 
@@ -67,6 +68,7 @@ class MPileUPVariant(object):
         4. has at least two or more keys
         """
         positions_to_call = []
+        contigs_to_call = []
         for pos in self.record_by_pos:
             if self.record_by_pos[pos].clean_type < 2: continue # only one base at this position, skip
             elif self.record_by_pos[pos].clean_cov < self.min_cov: continue # insufficient cov, skip
@@ -138,6 +140,7 @@ class MPileUPVariant(object):
                     alt_variant.append((base, count))
             if len(alt_variant) > 0: # only record this variant if there's at least two haps
                 self.variant[pos] = [r.clean_counts.most_common()[0]] + alt_variant
+                self.ref_name[pos] = r.chr
                 self.ref_base[pos] = r.ref
 
 
